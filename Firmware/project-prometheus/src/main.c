@@ -2,9 +2,9 @@
         PROJECT PROMETHEUS v2.0
         Prometheus Fire Alarm system developed on nRF7002 platform.
         © 2024, Asanka Sovis
-        v2.0.0
+        v2.1.1
         Started: 01/11/2023
-        Last Edited: 11/01/2024
+        Last Edited: 14/01/2024
 */
 
 #include <zephyr/kernel.h>
@@ -74,6 +74,8 @@ bool override = false;          // Variable to override the warning
 bool user_buzz = false;          // Variable to override and turn on the warning
 bool user_valve = false;         // Variable to override and turn on the valve
 
+int builtin_led_counter = 0;
+
 // Function definitions -----------------------------------------------------------
 // Utility
 static const int now_str(void); // Prints the current time since execution
@@ -129,6 +131,8 @@ int main(void)
 
         printk("initialize:\n");
 
+        gpio_pin_set_dt(&pin_builtin_led, 0);
+
 	while (true) {
                 if (false) {
                         if (read_dht11() == 0) {
@@ -149,12 +153,63 @@ int main(void)
                 if (false) {
                         printk("\n");
                 }
-                k_sleep(K_SECONDS(0.5));
+
+
+                if (builtin_led_counter == 10) {
+                        gpio_pin_set_dt(&pin_builtin_led, 1);
+                        k_sleep(K_SECONDS(0.1));
+                        gpio_pin_set_dt(&pin_builtin_led, 0);
+                        builtin_led_counter = 0;
+                } else {
+                        gpio_pin_set_dt(&pin_builtin_led, 0);
+                        builtin_led_counter++;
+                        k_sleep(K_SECONDS(0.1));
+                }
+
+                
 	}
 
 	return 0;
 }
 
+void initialize() {
+        /*
+                Initializes the devices
+
+                Arguments none
+                Returns void
+        */
+
+        int error_flag = 0;
+
+        do {
+                error_flag += initialize_device(pin_engage, GPIO_OUTPUT);
+                error_flag += initialize_device(pin_led, GPIO_OUTPUT);
+                error_flag += initialize_device(pin_solenoid, GPIO_OUTPUT);
+                error_flag += initialize_device(pin_buzzer, GPIO_OUTPUT);
+                error_flag += initialize_device(pin_builtin_led, GPIO_OUTPUT);
+                error_flag += initialize_dht11();
+                error_flag += initialize_mq135();
+                error_flag += initialize_uart();
+
+                if (error_flag != 0) {
+                        now_str();
+                        printk("One or more devices could not be initialized. Will retry in %d seconds...\n", INITIALIZE_TIMEOUT);
+
+                        gpio_pin_toggle_dt(&pin_builtin_led);
+                        k_sleep(K_SECONDS(INITIALIZE_TIMEOUT /2));
+                        gpio_pin_toggle_dt(&pin_builtin_led);
+                        k_sleep(K_SECONDS(INITIALIZE_TIMEOUT /2));
+
+                        error_flag = 0;
+                } else {
+                        gpio_pin_set_dt(&pin_builtin_led, 1);
+
+                        now_str();
+                        printk("Hardware initialized.\n");
+                }
+        } while (error_flag != 0);
+}
 
 /* 
 GENERAL FUNCTIONS -------------------------------------------------------------
@@ -162,6 +217,13 @@ GENERAL FUNCTIONS -------------------------------------------------------------
 
 static const int now_str(void)
 {
+        /*
+                Prints the time since device started on terminal for debugging
+                purposes.
+
+                Arguments void
+                Returns int 0
+        */
 	uint32_t now = k_uptime_get_32();
 	unsigned int ms = now % MSEC_PER_SEC;
 	unsigned int s;
@@ -180,22 +242,34 @@ static const int now_str(void)
 	return 0;
 }
 
-// ---------------------------------------------------------------------------
-
 /*
-DHT 11 Functions -------------------------------------------------------------
+DHT 11 Functions --------------------------------------------------------------
 */
 
 int print_temp_humid() {
+        /*
+                Prints the temperature and humidity reading from DHT-11
+
+                Arguments null
+                Returns int 0
+        */
         now_str();
+
         printk("%.1f Cel ; %.1f %%RH\n",
                 temperature,
                 humidity
                 );
+
         return 0;
 }
 
 int read_dht11() {
+        /*
+                Reads the DHT-11 sensor
+
+                Arguments null
+                Returns int error (0-no error)
+        */
         now_str();
         printk("Reading DHT11 data...\n");
 
@@ -225,6 +299,12 @@ int read_dht11() {
 }
 
 int initialize_dht11() {
+        /*
+                Initialize the DHT-11 sensor
+
+                Arguments null
+                Returns int error (0-no error, 1-device not ready)
+        */
 	if (!device_is_ready(dht11)) {
                 now_str();
 		printk("DHT11 is not ready.\n");
@@ -235,23 +315,34 @@ int initialize_dht11() {
         return 0;
 }
 
-// ---------------------------------------------------------------------------
-
 /*
 MQ 135 Functions -------------------------------------------------------------
 */
 
 int print_co2() {
+        /*
+                Prints the CO2 level
+
+                Arguments null
+                Returns int 0
+        */
+
         now_str();
         printk("CO2 Percentage: %d", co2);
+
         return 0;
 }
 
 int read_mq135() {
+        /*
+                Reads the MQ-135 sensor
+
+                Arguments null
+                Returns error (0-no error)
+        */
+
         struct spi_buf rx_bufs = { &co2, 8 };
         struct spi_buf_set rx = { &rx_bufs, 1 };
-
-        //gpio_pin_set_dt(&spi_cfg.cs.gpio, 0);
 
         int error = spi_read(mq135_spi, &spi_cfg, &rx);
 
@@ -269,6 +360,13 @@ int read_mq135() {
 }
 
 int initialize_mq135() {
+        /*
+                Initializes the MQ-135 sensor
+
+                Arguments null
+                Returns error (0-no error)
+        */
+
         if (!device_is_ready(mq135_spi)) {
                 now_str();
                 printk("MQ135 is not ready.\n");
@@ -279,13 +377,18 @@ int initialize_mq135() {
         return 0;
 }
 
-// ---------------------------------------------------------------------------
-
 /*
-IO DEVICE FUNCTIONS ---------------------------------------------
+IO DEVICE FUNCTIONS ----------------------------------------------------------
 */
 
 int initialize_device(const struct gpio_dt_spec _device, gpio_flags_t _flags) {
+        /*
+                Initializes the digital IO devices
+
+                Arguments gpio_dt_spec device, gpio_flags_t flags
+                Returns int error (0-no error, -1-Device not ready, -2-Pin configuration failure)
+        */
+
 	if(!device_is_ready(_device.port)) {
                 now_str();
                 printk("ERROR: %s could not be initialized. Device is not ready.\n", _device.port->name);
@@ -305,14 +408,23 @@ int initialize_device(const struct gpio_dt_spec _device, gpio_flags_t _flags) {
         return 0;
 }
 
-// ---------------------------------------------------------------------------
+/*
+INTERNAL UART FUNCTIONS ------------------------------------------------------
+*/
 
 int initialize_uart() {
+        /*
+                Initializes the internal UART communication
+
+                Arguments null
+                Returns int error (0-no error)
+        */
+
         if (!device_is_ready(uart_dev)) {
                 now_str();
                 printk("UART device is not ready.\n");
 
-                return 1;
+                return -1;
         }
 
         /* configure interrupt and callback to receive data */
@@ -338,40 +450,118 @@ int initialize_uart() {
         return 0;
 }
 
+void serial_cb(const struct device *_dev, void *_user_data)
+{
+        /*
+                Read characters from UART until line end is detected. Afterwards push the
+                data to the message queue.
 
+                Arguments device UART device, void user data
+                Returns void
+        */
 
-void initialize() {
-        int error_flag = 0;
+        static char cmd_buf[CMD_SIZE];
+        static char msg_buf[MSG_SIZE];
 
-        do {
-                error_flag += initialize_device(pin_engage, GPIO_OUTPUT);
-                error_flag += initialize_device(pin_led, GPIO_OUTPUT);
-                error_flag += initialize_device(pin_solenoid, GPIO_OUTPUT);
-                error_flag += initialize_device(pin_buzzer, GPIO_OUTPUT);
-                error_flag += initialize_device(pin_builtin_led, GPIO_OUTPUT);
-                error_flag += initialize_dht11();
-                error_flag += initialize_mq135();
-                error_flag += initialize_uart();
+        static int rx_buf_pos;
+        bool cmd_read = true;
+        uint8_t c;
 
-                if (error_flag != 0) {
-                        now_str();
-                        printk("One or more devices could not be initialized. Will retry in %d seconds...\n", INITIALIZE_TIMEOUT);
-                        k_sleep(K_SECONDS(INITIALIZE_TIMEOUT ));
-                        error_flag = 0;
-                } else {
-                        now_str();
-                        printk("Hardware initialized.\n");
+        if (!uart_irq_update(uart_dev)) {
+                return;
+        }
+
+        if (!uart_irq_rx_ready(uart_dev)) {
+                return;
+        }
+
+        while (uart_fifo_read(uart_dev, &c, 1) == 1) {
+                if ((c == '\n' || c == '\r') && rx_buf_pos > 0) {
+                        // End of line
+                        msg_buf[rx_buf_pos] = '\0';
+
+                        // if queue is full, message is silently dropped
+                        k_msgq_put(&uart_msgq, &msg_buf, K_NO_WAIT);
+
+                        // reset the buffer (it was copied to the msgq)
+                        rx_buf_pos = 0;
+                }else if (c == ':') {
+                        // End of command
+                        cmd_read = false;
+                        cmd_buf[rx_buf_pos] = '\0';
+                        rx_buf_pos = 0;
+                } else if (rx_buf_pos < (sizeof(msg_buf) - 1)) {
+                        // Reading
+                        if (cmd_read)
+                                cmd_buf[rx_buf_pos++] = c;
+                        else
+                                msg_buf[rx_buf_pos++] = c;
                 }
-        } while (error_flag != 0);
+                // else: characters beyond buffer size are dropped
+
+                printk(" \b");
+        }
+
+        printk("Command Recieved: %s\n", &cmd_buf[0]);
+
+        command_recieved(&cmd_buf[0], &msg_buf[0]);
+
+        memset(&cmd_buf, 0, sizeof cmd_buf - 1);
+        memset(&msg_buf, 0, sizeof msg_buf - 1);
+        rx_buf_pos = 0;
+        cmd_read = true;
 }
 
 /*
-AAAA
+COMMUNICATION FUNCTION -------------------------------------------------------
 */
 
+void command_recieved(char * _command, char * _data) {
+        /*
+                Function to parse recieved commands
+
+                Arguments char* command, char* data
+                Returns void
+        */
+        
+        if (strcmp(_command, "override") == 0) {
+                // Command to override warnings
+                override_alarm(strcmp(_data, "true") == 0);
+        } else if (strcmp(_command, "userBuzz") == 0) {
+                // Buzz the buzzer by user command
+                custom_buzz(strcmp(_data, "true") == 0);
+        } else if (strcmp(_command, "userValve") == 0) {
+                // Open valve by user command
+                custom_valve(strcmp(_data, "true") == 0);
+        } else if (strcmp(_command, "deviceInfo") == 0) {
+                // Return device info
+                printk("deviceInfo:%s\n", DEVICE_INFO);
+        } else if (strcmp(_command, "get_caps") == 0) {
+                // Return the cap values
+                get_caps();
+        } else if (strcmp(_command, "set_caps") == 0) {
+                // Set the cap values
+                set_caps(_data);
+        } else if (strcmp(_command, "update") == 0) {
+                // Send an update
+                send_update(co2, temperature, humidity);
+        } else {
+                // Invalid command
+                printk("%s:unknown _command\n", _command);
+                return;
+        }    
+
+        // Sends acknowledgement
+        printk("ack:%s\n", _command);
+}
+
 void send_update(float _co2, float _temp, float _humid) {
-        // Serialized the sensor data as JSON and sends it to the serial port
-        // Accepts _co2, _temp, _humid as float and return null
+        /*
+                Serialize the sensor data as JSON and sends it to the serial port
+
+                Arguments float CO2, float temperature, float humidity
+                Returns void
+        */
 
         now_str();
         printk("Sending current update. Encoding...\n");
@@ -400,75 +590,13 @@ void send_update(float _co2, float _temp, float _humid) {
         printk("update:%s\n", cJSON_PrintUnformatted(update));
 }
 
-void compare(float _co2, float _temp, float _humid) {
-        // Function to check if the levels are high
-        // Accepts _co2, _temp, _humid as float, return null
-        // NEEDS TUNING
-
-        warning = ((_co2 > co2_cap) || (_humid < humid_cap));
-        open_valve = _temp > temp_cap;
-}
-
-void buzz() {
-        // Function that controls the buzzer
-        // Accepts null, returns null
-
-        if (user_valve || (open_valve && !(override))) {
-                gpio_pin_set_dt(&pin_buzzer, 1);
-                k_sleep(K_SECONDS(0.5));
-        } else if (user_buzz || (warning && !(override))) {
-                gpio_pin_set_dt(&pin_buzzer, 1);
-                k_sleep(K_SECONDS(0.5));
-                gpio_pin_set_dt(&pin_buzzer, 0);
-        } else {
-                gpio_pin_set_dt(&pin_buzzer, 0);
-                k_sleep(K_SECONDS(0.5));
-        }
-}
-
-void control_valve() {
-        // Function that controls the valve
-        // Accepts null, returns null
-
-        if (user_valve || (open_valve && !(override))) {
-                gpio_pin_set_dt(&pin_solenoid, 0);
-        } else {
-                gpio_pin_set_dt(&pin_solenoid, 1);
-        }
-}
-
-void indicator() {
-        // Function that controls the indicator LED
-        // Accepts null, returns null
-
-        if (user_buzz || (warning && !(override))) {
-                gpio_pin_set_dt(&pin_led, 1);
-        } else if (user_valve || (open_valve && !(override))) {
-                gpio_pin_set_dt(&pin_led, 1);
-        } else {
-                gpio_pin_set_dt(&pin_led, 1);
-                k_sleep(K_SECONDS(0.1));
-                gpio_pin_set_dt(&pin_led, 0);
-        }
-
-        k_sleep(K_SECONDS(0.5));
-}
-
-void override_alarm(bool _value) {
-        override = _value;
-}
-
-void custom_buzz(bool _value) {
-        user_buzz = _value;
-}
-
-void custom_valve(bool _value) {
-        user_valve = _value;
-}
-
 void get_caps() {
-        // Sends the cap values set for Temp, CO2 and Humidity
-        // Accepts none and return null
+        /*
+                Sends the cap values set for Temp, CO2 and Humidity
+
+                Arguments none
+                Returns void
+        */
 
         now_str();
         printk("Sending current cap values. Encoding...\n");
@@ -482,8 +610,12 @@ void get_caps() {
 }
 
 void set_caps(char *_input) {
-        // Sets the cap values set for Temp, CO2 and Humidity
-        //Accepts input as String and return null
+        /*
+                Sets the cap values set for Temp, CO2 and Humidity
+
+                Arguments char* recieved JSON
+                Returns void
+        */
 
         now_str();
         printk("Recieved updated cap values. Decoding...\n");
@@ -501,85 +633,115 @@ void set_caps(char *_input) {
         printk("Caps Updated: CO2 %dppm | Temperature %.1f Cel | Humidity %.1f %%RH\n", co2_cap, temp_cap, humid_cap);
 }
 
-void command_recieved(char * _command, char * _data) {
-        // Function to parse recieved commands
-        // Accepts _data as String and return null
-        //
-        
-        if (strcmp(_command, "override") == 0) {
-                override_alarm(strcmp(_data, "true") == 0);
-        } else if (strcmp(_command, "userBuzz") == 0) {
-                custom_buzz(strcmp(_data, "true") == 0);
-        } else if (strcmp(_command, "userValve") == 0) {
-                custom_valve(strcmp(_data, "true") == 0);
-        } else if (strcmp(_command, "deviceInfo") == 0) {
-                printk("deviceInfo:%s\n", DEVICE_INFO);
-        } else if (strcmp(_command, "get_caps") == 0) {
-                get_caps();
-        } else if (strcmp(_command, "set_caps") == 0) {
-                set_caps(_data);
-        } else if (strcmp(_command, "update") == 0) {
-                send_update(co2, temperature, humidity);
-        } else {
-                printk("%s:unknown _command\n", _command);
-                return;
-        }    
+/*
+CONTROL FUNCTIONS ------------------------------------------------------------
+*/
 
-        printk("ack:%s\n", _command);
-}
-
-void serial_cb(const struct device *_dev, void *_user_data)
-{
+void compare(float _co2, float _temp, float _humid) {
         /*
-        Read characters from UART until line end is detected. Afterwards push the
-        data to the message queue.
+                Function to check if the levels are high
+
+                Arguments float CO2, float temperature, float humidity
+                Returns void
         */
 
-        static char cmd_buf[CMD_SIZE];
-        static char msg_buf[MSG_SIZE];
+        warning = ((_co2 > co2_cap) || (_humid < humid_cap));
+        open_valve = _temp > temp_cap;
+}
 
-        static int rx_buf_pos;
-        bool cmd_read = true;
-        uint8_t c;
+void buzz() {
+        /*
+                Function that controls the buzzer
 
-        if (!uart_irq_update(uart_dev)) {
-                return;
+                Arguments none
+                Returns void
+        */
+
+        if (user_valve || (open_valve && !(override))) {
+                // Not overridden and valve open issued or user buzz
+                gpio_pin_set_dt(&pin_buzzer, 1);
+                k_sleep(K_SECONDS(0.5));
+        } else if (user_buzz || (warning && !(override))) {
+                // Not overridden and warning issued or user buzz
+                gpio_pin_set_dt(&pin_buzzer, 1);
+                k_sleep(K_SECONDS(0.5));
+                gpio_pin_set_dt(&pin_buzzer, 0);
+        } else {
+                // Buzzer off
+                gpio_pin_set_dt(&pin_buzzer, 0);
+                k_sleep(K_SECONDS(0.5));
+        }
+}
+
+void control_valve() {
+        /*
+                Function that controls the valve
+
+                Arguments none
+                Returns void
+        */
+
+        if (user_valve || (open_valve && !(override))) {
+                // Not overridden, open valve issued or user valve
+                gpio_pin_set_dt(&pin_solenoid, 0);
+        } else {
+                // Off
+                gpio_pin_set_dt(&pin_solenoid, 1);
+        }
+}
+
+void indicator() {
+        /*
+                Function that controls the indicator LED
+
+                Arguments none
+                Returns void
+        */
+
+        if (user_buzz || (warning && !(override))) {
+                // Warning issued, not overridden or user buzz
+                gpio_pin_set_dt(&pin_led, 1);
+        } else if (user_valve || (open_valve && !(override))) {
+                // Valve open, nor overridden or user valve open
+                gpio_pin_set_dt(&pin_led, 1);
+        } else {
+                // Standby
+                gpio_pin_set_dt(&pin_led, 1);
+                k_sleep(K_SECONDS(0.1));
+                gpio_pin_set_dt(&pin_led, 0);
         }
 
-        if (!uart_irq_rx_ready(uart_dev)) {
-                return;
-        }
+        k_sleep(K_SECONDS(0.5));
+}
 
-        while (uart_fifo_read(uart_dev, &c, 1) == 1) {
-                if ((c == '\n' || c == '\r') && rx_buf_pos > 0) {
-                        /* terminate string */
-                        msg_buf[rx_buf_pos] = '\0';
+void override_alarm(bool _value) {
+        /*
+                Overrides the alarm
 
-                        /* if queue is full, message is silently dropped */
-                        k_msgq_put(&uart_msgq, &msg_buf, K_NO_WAIT);
+                Arguments bool value
+                Returns void
+        */
 
-                        /* reset the buffer (it was copied to the msgq) */
-                        rx_buf_pos = 0;
-                }else if (c == ':') {
-                        cmd_read = false;
-                        cmd_buf[rx_buf_pos] = '\0';
-                        rx_buf_pos = 0;
-                } else if (rx_buf_pos < (sizeof(msg_buf) - 1)) {
-                        if (cmd_read)
-                                cmd_buf[rx_buf_pos++] = c;
-                        else
-                                msg_buf[rx_buf_pos++] = c;
-                }
-                /* else: characters beyond buffer size are dropped */
-                printk(" \b");
-        }
+        override = _value;
+}
 
-        printk("Command Recieved: %s\n", &cmd_buf[0]);
+void custom_buzz(bool _value) {
+        /*
+                Custom buzzer
 
-        command_recieved(&cmd_buf[0], &msg_buf[0]);
+                Arguments bool value
+                Returns void
+        */
 
-        memset(&cmd_buf, 0, sizeof cmd_buf - 1);
-        memset(&msg_buf, 0, sizeof msg_buf - 1);
-        rx_buf_pos = 0;
-        cmd_read = true;
+        user_buzz = _value;
+}
+
+void custom_valve(bool _value) {
+        /*
+                Open valve
+
+                Arguments bool value
+                Returns void
+        */
+        user_valve = _value;
 }
