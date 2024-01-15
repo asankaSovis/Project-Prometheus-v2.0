@@ -5,6 +5,7 @@ Thus we see the importance of incorporating a fire monitoring and extinguishing 
 
 ## Prometheus v1.0
 The idea of a fire alarm system has already been implemented in the form of Prometheus Fire Alarm System v1.0. This version aimed at developing a cost-effective monitoring and extinguishing system that is robust and scalable. The following were the targets of this project:
+
 1. **Cost** - Develop a system based on off-the-shelf components that are cost-effective
 2. **Scalable** - Availability for multiple monitoring devices to operate and synchronize in real-time
 3. **Independent** - Whether connected or not, the device should monitor and react on its own without the involvement of the operator
@@ -13,9 +14,11 @@ The idea of a fire alarm system has already been implemented in the form of Prom
 The next step would be to improve the Prometheus Fire Alarm System into a smart home device, bringing in the cost-effective, independent and scalable fire alarm and extinguishing system to the smart home. This will allow it to sit alongside other sensors and systems to provide all the smart homes with safety from fire.
 
 The improvements thus suggested will be as follows.
+
 1. Add a built-in charging system to allow the system to run when even the power is lost
 2. Redesign the system to use the **nRF7002** chip instead of an ATMega
 3. Rewrite the firmware to incorporate the Matter protocol
+
 ## Further Information
 [Prometheus Fire Alarm System Firmware Repo](https://github.com/asankaSovis/prometheus-fire-alarm/tree/main)
 [Prometheus Command Panel Repo](https://github.com/asankaSovis/prometheus-command-panel)
